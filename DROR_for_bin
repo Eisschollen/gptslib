@@ -1,0 +1,94 @@
+import numpy as np
+import open3d as o3d
+import sys
+import math
+
+def dror_filter(input_cloud):
+    radius_multiplier_ = 3
+    azimuth_angle_ = 0.16
+    min_neighbors_ = 3
+    k_neighbors_ = min_neighbors_ + 1
+    min_search_radius_ = 0.04
+
+    filtered_cloud_list = []
+    noise_points_list = []
+
+    # Create KDTree for nearest neighbors search
+    pcd_tree = o3d.geometry.KDTreeFlann(input_cloud)
+
+    # Go over all the points and check which doesn't have enough neighbors
+    # perform filtering
+    for p_id in range(len(input_cloud.points)):
+        x_i = input_cloud.points[p_id][0]
+        y_i = input_cloud.points[p_id][1]
+        range_i = math.sqrt(pow(x_i, 2) + pow(y_i, 2))
+        search_radius_dynamic = radius_multiplier_ * azimuth_angle_ * 3.14159265359 / 180 * range_i
+
+        if search_radius_dynamic < min_search_radius_:
+            search_radius_dynamic = min_search_radius_
+
+        [k, idx, sqdist] = pcd_tree.search_radius_vector_3d(input_cloud.points[p_id], search_radius_dynamic)
+
+        # Count all neighbors
+        neighbors = -1
+        for val in sqdist:
+            if math.sqrt(val) < search_radius_dynamic:
+                neighbors += 1
+
+        # This point is not snow, add it to the filtered_cloud
+        if neighbors >= min_neighbors_:
+            filtered_cloud_list.append(input_cloud.points[p_id])
+        else:
+            noise_points_list.append(input_cloud.points[p_id])
+            
+    filtered_cloud = o3d.geometry.PointCloud()
+    filtered_cloud.points = o3d.utility.Vector3dVector(filtered_cloud_list)
+
+    noise_points = o3d.geometry.PointCloud()
+    noise_points.points = o3d.utility.Vector3dVector(noise_points_list)
+
+    return filtered_cloud, noise_points
+
+def crop_cloud(input_cloud, min_vals=(-4, -4, -3), max_vals=(4, 4, 10)):
+    cropped_cloud = input_cloud.crop(o3d.geometry.AxisAlignedBoundingBox(min_vals, max_vals))
+    return cropped_cloud
+
+def print_snow_points(frame):
+    seq = format(frame, '04')
+
+    BASE = '/media/zhang/TakedaLab/Datasets/cadc/2018_03_06/'
+    lidar_path = BASE + seq + "/labeled/lidar_points/data/" + format(0, '010') + ".bin"
+    scan_data = np.fromfile(lidar_path, dtype=np.float32)
+    lidar = scan_data.reshape((-1, 4))
+
+    # Create PointCloud object
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(lidar[:, :3])
+
+    # Crop the point cloud
+    cropped_cloud = crop_cloud(pcd)
+
+    # Run DROR
+    filtered_cloud, noise_points = dror_filter(cropped_cloud)
+
+    # Print number of snow points
+    number_snow_points = len(cropped_cloud.points) - len(filtered_cloud.points)
+    print(number_snow_points)
+
+    # Visualize the point cloud
+    vis = o3d.visualization.Visualizer()
+    vis.create_window()
+    vis.add_geometry(cropped_cloud)
+    vis.add_geometry(filtered_cloud)
+    vis.add_geometry(noise_points)
+
+    # Set point cloud colors
+    cropped_cloud.paint_uniform_color([0.5, 0.5, 0.5])  # gray
+    filtered_cloud.paint_uniform_color([0, 1, 0])       # green
+    noise_points.paint_uniform_color([1, 0, 0])         # red
+
+    # Run the visualization
+    vis.run()
+    vis.destroy_window()
+    
+print_snow_points(1)    
